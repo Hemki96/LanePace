@@ -9,6 +9,8 @@ import Foundation
 import Combine
 import SwiftUI
 import AVFoundation
+import AudioToolbox
+import UIKit
 
 final class AdvancedTimerViewModel: ObservableObject {
     
