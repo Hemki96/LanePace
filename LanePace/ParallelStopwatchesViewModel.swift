@@ -9,6 +9,7 @@ import Foundation
 import SwiftData
 import QuartzCore
 
+@MainActor
 final class ParallelStopwatchesViewModel: ObservableObject {
     struct Stopwatch: Equatable {
         var isRunning: Bool = false
@@ -20,7 +21,6 @@ final class ParallelStopwatchesViewModel: ObservableObject {
     @Published private(set) var athleteIdToStopwatch: [PersistentIdentifier: Stopwatch] = [:]
 
     private var timer: DispatchSourceTimer?
-    private let tickQueue = DispatchQueue(label: "com.lanePace.parallel.stopwatches", qos: .userInteractive)
 
     // MARK: - Public API
     func ensureStopwatch(for athleteId: PersistentIdentifier) {
@@ -70,7 +70,7 @@ final class ParallelStopwatchesViewModel: ObservableObject {
     // MARK: - Timing
     private func startTimerIfNeeded() {
         guard timer == nil else { return }
-        let t = DispatchSource.makeTimerSource(queue: tickQueue)
+        let t = DispatchSource.makeTimerSource(queue: DispatchQueue.main)
         t.schedule(deadline: .now(), repeating: .milliseconds(20), leeway: .milliseconds(2))
         t.setEventHandler { [weak self] in self?.tick() }
         timer = t
@@ -79,30 +79,30 @@ final class ParallelStopwatchesViewModel: ObservableObject {
 
     private func stopTimerIfNeeded() {
         // Stop when nothing is running
-        if !athleteIdToStopwatch.values.contains(where: { $0.isRunning }) {
-            timer?.setEventHandler {}
-            timer?.cancel()
-            timer = nil
-        }
+        guard let timer, !athleteIdToStopwatch.values.contains(where: { $0.isRunning }) else { return }
+        timer.setEventHandler {}
+        timer.cancel()
+        self.timer = nil
     }
 
     private func tick() {
         let now = CACurrentMediaTime()
-        var changedIds: [PersistentIdentifier] = []
-        for (id, var sw) in athleteIdToStopwatch {
-            guard sw.isRunning else { continue }
+        let runningIds = athleteIdToStopwatch
+            .filter { $0.value.isRunning }
+            .map { $0.key }
+
+        guard !runningIds.isEmpty else { return }
+
+        for id in runningIds {
+            guard var sw = athleteIdToStopwatch[id] else { continue }
             let last = sw.lastUptime ?? now
             let delta = max(0, now - last)
             sw.lastUptime = now
             sw.elapsed += delta
             athleteIdToStopwatch[id] = sw
-            changedIds.append(id)
         }
-        if !changedIds.isEmpty {
-            DispatchQueue.main.async { [weak self] in
-                self?.objectWillChange.send()
-            }
-        }
+
+        objectWillChange.send()
     }
 
     // MARK: - Formatting
